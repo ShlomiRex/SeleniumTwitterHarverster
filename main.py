@@ -1,65 +1,45 @@
 from selenium import webdriver
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.wait import WebDriverWait
 from selenium.webdriver.common.by import By
 from selenium.common import exceptions
-import sqlite3
 import time
 from datetime import datetime
-import subprocess
-import os
 
+from Utils import compress_png_lossy, PNGQUANT_NotFound
+from db import Database
 
-driver = webdriver.Chrome(ChromeDriverManager().install())
+import SeleriumDriver
+
+# You can choose the browser and tools for the driver. Example: Chrome, Firefox, Safari, Brave, Brave + Tor, Firefox + Tor and more.
+
+#driver = SeleriumDriver.get_brave_tor_driver()
+driver = SeleriumDriver.get_chrome_driver()
+
 
 url = "https://twitter.com/search?q=Israel&src=typed_query&f=live"
 driver.get(url)
 
-con = sqlite3.connect('tweets.db')
-cur = con.cursor()
-
 TMP_SCREENSHOT_FILE_NAME = "shot.png"
 TMP_SCREENSHOT_FILE_NAME_COMPRESSED = "shot_compressed.png"
 
-def create_db():
-    cur.execute(f'''CREATE TABLE IF NOT EXISTS Tweets
-                   (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    tweet_timestamp DATETIME,
-                    sender_id TEXT,
-                    sender_display_name TEXT,
-                    message BLOB,
-                    message_lang TEXT,
-                    screenshot BLOB,
-                    likes INTEGER,
-                    comments INTEGER,
-                    tweet_href TEXT);''')
-    con.commit()
 
 def hide_element(xpath):
     footer = driver.find_element(By.XPATH, xpath)
     driver.execute_script(f'arguments[0].style.display="none"', footer)
 
+
 def remove_footer():
     xpath = '//*[@id="layers"]/div'
     hide_element(xpath)
 
-def compress(quality = 1):
-    if os.path.exists(TMP_SCREENSHOT_FILE_NAME_COMPRESSED):
-        os.remove(TMP_SCREENSHOT_FILE_NAME_COMPRESSED)
 
-    try:
-        p = subprocess.Popen(["pngquant", "--quality", str(quality), "--ext", "_compressed.png", TMP_SCREENSHOT_FILE_NAME])
-        p.wait()
-    except FileNotFoundError:
-        driver.quit()
-        raise "pngquant not found. Please install pngquant."
+class TwitterHarverster:
+    def __init__(self):
+        self.db = Database()
+        self.db.create_db()
+        remove_footer()
 
-create_db()
-
-remove_footer()
 tweets_xpath = '/html/body/div/div/div/div[2]/main/div/div/div/div[1]/div/div[2]/div/div/section/div/div/*'
-
 
 inner_tweet_sender_id_xpath = './div/div/article/div/div/div/div[2]/div[2]/div[1]/div/div/div[1]/div[1]/a/div/div[2]/div/span'
 inner_tweet_sender_display_name_xpath = './div/div/article/div/div/div/div[2]/div[2]/div[1]/div/div/div[1]/div[1]/a/div/div[1]/div[1]/span/span'
@@ -69,6 +49,8 @@ inner_tweet_id = ".//a[contains(@href, '/status/')]"
 inner_tweet_message = './/div[@lang]'
 
 id_queue = []
+
+harverster = TwitterHarverster()
 
 while True:
     tweets = WebDriverWait(driver, 10).until(lambda x: x.find_elements(By.XPATH, tweets_xpath))
@@ -81,18 +63,32 @@ while True:
             id_queue.append(id)
 
             tweet.screenshot(TMP_SCREENSHOT_FILE_NAME)
-            compress()
+            try:
+                compress_png_lossy(TMP_SCREENSHOT_FILE_NAME)
+            except PNGQUANT_NotFound:
+                driver.quit()
+                break
 
             driver.execute_script("arguments[0].style.border='3px red solid'", tweet)
 
-            _sender_id = tweet.find_element(By.XPATH, inner_tweet_sender_id_xpath).text
-            _sender_display_name = tweet.find_element(By.XPATH, inner_tweet_sender_display_name_xpath).text
+            try:
+                _sender_id = tweet.find_element(By.XPATH, inner_tweet_sender_id_xpath).text
+            except exceptions.NoSuchElementException:
+                _sender_id = None
+                # Something is wrong.
+
+
+            try:
+                _sender_display_name = tweet.find_element(By.XPATH, inner_tweet_sender_display_name_xpath).text
+            except exceptions.NoSuchElementException:
+                _sender_display_name = None
+                # Something is wrong. Why can't we find the sender name?
 
             try:
                 _datetime_element = WebDriverWait(driver, 20).until(lambda x: x.find_element(By.XPATH, "//time"))
-                _datetime = _datetime_element.get_attribute("datetime")
+                _tweet_timestamp = _datetime_element.get_attribute("datetime")
             except exceptions.StaleElementReferenceException as e:
-                _datetime = None
+                _tweet_timestamp = None
 
             try:
                 _message = tweet.find_element(By.XPATH, inner_tweet_message)
@@ -112,14 +108,12 @@ while True:
                 _tweet_id = tweet.find_element(By.XPATH, inner_tweet_id)
                 _tweet_href = _tweet_id.get_attribute("href")
             except exceptions.NoSuchElementException:
-                _tweet_id = None
+                _tweet_href = None
 
             _utc_time_now = datetime.utcnow()
 
-            with open(TMP_SCREENSHOT_FILE_NAME_COMPRESSED, "rb") as file:
-                _screenshot_binary = sqlite3.Binary(file.read())
-                cur.execute("INSERT INTO Tweets (timestamp, tweet_timestamp, sender_id, message, screenshot, message_lang, sender_display_name, tweet_href) VALUES (?, ?, ?, ?, ?, ?, ?, ?);", [_utc_time_now, _datetime, _sender_id, _message_text, _screenshot_binary, _message_lang, _sender_display_name, _tweet_href])
-                con.commit()
+            harverster.db.insert_tweet(timestamp=str(_utc_time_now), tweet_timestamp=_tweet_timestamp, sender_id=_sender_id, message=_message_text, message_lang=_message_lang, sender_display_name=_sender_display_name, tweet_href=_tweet_href, screenshot_img_path=TMP_SCREENSHOT_FILE_NAME_COMPRESSED, likes=_likes)
+
             driver.execute_script("arguments[0].style.border=''", tweet)
             time.sleep(1)
     for id in id_queue:
