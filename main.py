@@ -45,13 +45,15 @@ def remove_footer():
     hide_element(xpath)
 
 def compress(quality = 1):
-    _exec = r'C:\Users\Shlomi\Downloads\pngquant-windows\pngquant\pngquant.exe'
-
     if os.path.exists(TMP_SCREENSHOT_FILE_NAME_COMPRESSED):
         os.remove(TMP_SCREENSHOT_FILE_NAME_COMPRESSED)
 
-    p = subprocess.Popen([_exec, "--quality", str(quality), "--ext", "_compressed.png", TMP_SCREENSHOT_FILE_NAME])
-    p.wait()
+    try:
+        p = subprocess.Popen(["pngquant", "--quality", str(quality), "--ext", "_compressed.png", TMP_SCREENSHOT_FILE_NAME])
+        p.wait()
+    except FileNotFoundError:
+        driver.quit()
+        raise "pngquant not found. Please install pngquant."
 
 create_db()
 
