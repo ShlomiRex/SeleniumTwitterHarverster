@@ -33,19 +33,27 @@ id_queue = []
 
 
 class TwitterHarvester:
-    def __init__(self):
+    def __init__(self, search_what):
         self.db = Database()
         self.db.create_db()
 
-        self.driver = SeleriumDriver.get_driver(SeleriumDriver.Browser.BRAVE, tor=False, headless=True)
+        self.driver = SeleriumDriver.get_driver(SeleriumDriver.Browser.BRAVE, tor=False, headless=False)
 
-        url = "https://twitter.com/search?q=Israel&src=typed_query&f=live"
+        #url = "https://twitter.com/search?q=Israel&src=typed_query&f=live"
+        url = f"https://twitter.com/search?q={search_what}&src=typed_query&f=live"
         self.driver.get(url)
 
         self.__remove_footer()
         self.__remove_header()
 
     def __process_tweet(self, tweet):
+
+        # try:
+        #     self.driver.execute_script("arguments[0].style.border='3px red solid'", tweet)
+        # except exceptions.StaleElementReferenceException:
+        #     # We don't do anything, it's only visual, not data.
+        #     pass
+
         try:
             tweet.screenshot(TMP_SCREENSHOT_FILE_NAME)
             try:
@@ -56,39 +64,35 @@ class TwitterHarvester:
                 self.driver.quit()
                 return
 
-        except exceptions.StaleElementReferenceException | exceptions.StaleElementReferenceException:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _screenshot_path = None
-
-        # try:
-        #     driver.execute_script("arguments[0].style.border='3px red solid'", tweet)
-        # except exceptions.StaleElementReferenceException:
-        #     # We don't do anything, it's only visual, not data.
-        #     pass
 
         try:
             _sender_id = tweet.find_element(By.XPATH, inner_tweet_sender_id_xpath).text
-        except exceptions.NoSuchElementException | exceptions.StaleElementReferenceException:
+            logger.info(f"Sender ID: {_sender_id}")
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _sender_id = None
             # Something is wrong.
 
         try:
             _sender_display_name = tweet.find_element(By.XPATH, inner_tweet_sender_display_name_xpath).text
-        except exceptions.NoSuchElementException:
+            logger.info(f"Sender display name: {_sender_display_name}")
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _sender_display_name = None
             # Something is wrong. Why can't we find the sender name?
 
         try:
-            _datetime_element = WebDriverWait(self.driver, 20).until(
+            _datetime_element = WebDriverWait(self.driver, 10).until(
                 lambda x: x.find_element(By.XPATH, "//time"))
             _tweet_timestamp = _datetime_element.get_attribute("datetime")
-        except exceptions.StaleElementReferenceException as e:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _tweet_timestamp = None
 
         try:
             _message = tweet.find_element(By.XPATH, inner_tweet_message)
             _message_lang = _message.get_attribute("lang")
             _message_text = _message.text
-        except exceptions.NoSuchElementException as e:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _message = None
             _message_lang = None
             _message_text = None
@@ -97,13 +101,13 @@ class TwitterHarvester:
             _likes = tweet.find_element(By.XPATH, inner_tweet_likes).text
             if _likes == '':
                 _likes = 0
-        except exceptions.NoSuchElementException:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _likes = 0
 
         try:
             _tweet_id = tweet.find_element(By.XPATH, inner_tweet_id)
             _tweet_href = _tweet_id.get_attribute("href")
-        except exceptions.NoSuchElementException:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _tweet_href = None
 
         try:
@@ -111,7 +115,7 @@ class TwitterHarvester:
                                                       inner_tweet_display_name_and_verified_and_id)
             _inner_tweet_top_div.find_element(By.XPATH, inner_tweet_inner_top_verified_account)
             _verified_account = True
-        except exceptions.NoSuchElementException:
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _verified_account = False
 
         _utc_time_now = datetime.utcnow()
@@ -124,8 +128,10 @@ class TwitterHarvester:
 
         # Scroll by amount of tweet height
         _scroll_y = tweet.rect["height"]
-        # driver.execute_script(f"window.scrollBy(0, {_scroll_y})")
-        # driver.execute_script("arguments[0].style.border=''", tweet)
+        self.driver.execute_script(f"window.scrollBy(0, {_scroll_y})")
+
+        #self.driver.execute_script("arguments[0].style.border=''", tweet)
+
         time.sleep(1)
 
     def __hide_element(self, xpath):
@@ -146,21 +152,23 @@ class TwitterHarvester:
         while True:
             # Tweets feed gets refreshed. So we ask again for the tweets.
             tweets = WebDriverWait(self.driver, 10).until(lambda x: x.find_elements(By.XPATH, tweets_xpath))
-            time.sleep(3)
+            num_tweets = len(tweets)
+
+            logger.info(f"Processing batch of {num_tweets} tweets")
+
             new_ids = []
             for tweet in tweets:
-                id = tweet.id
-                new_ids.append(id)
-                if id not in id_queue:
-                    id_queue.append(id)
+                _id = tweet.id
+                new_ids.append(_id)
+                if _id not in id_queue:
+                    id_queue.append(_id)
                     self.__process_tweet(tweet)
 
-            for id in id_queue:
-                if id not in new_ids:
-                    id_queue.remove(id)
-            print(f"Tweets: {len(tweets)}")
+            for _id in id_queue:
+                if _id not in new_ids:
+                    id_queue.remove(_id)
 
 
 if __name__ == "__main__":
-    harvester = TwitterHarvester()
+    harvester = TwitterHarvester("Israel")
     harvester.run()

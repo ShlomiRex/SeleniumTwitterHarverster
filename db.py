@@ -47,8 +47,11 @@ class Database:
         ) 
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         '''
-        with open(screenshot_img_path, "rb") as file:
-            _screenshot_binary = sqlite3.Binary(file.read())
+        if screenshot_img_path:
+            with open(screenshot_img_path, "rb") as file:
+                _screenshot_binary = sqlite3.Binary(file.read())
+        else:
+            _screenshot_binary = None
 
         cur = self.con.cursor()
         cur.execute(sql, [timestamp, tweet_timestamp, sender_id, message, _screenshot_binary, message_lang,
