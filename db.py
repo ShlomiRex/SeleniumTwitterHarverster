@@ -20,16 +20,17 @@ class Database:
             message BLOB,
             message_lang TEXT,
             screenshot BLOB,
-            likes INTEGER,
+            likes INTEGER DEFAULT 0,
             comments INTEGER,
             tweet_href TEXT
+            verified_account INTEGER DEFAULT 0
         );
         ''')
         self.con.commit()
 
     def insert_tweet(self, timestamp: Optional[str], tweet_timestamp: Optional[str], sender_id: Optional, message: Optional,
                      message_lang: Optional, sender_display_name: Optional, tweet_href: Optional,
-                     screenshot_img_path: Optional, likes: Optional[str]):
+                     screenshot_img_path: Optional, likes: Optional[str], verified_account: Optional[bool]):
         sql = '''
         INSERT INTO Tweets 
         (
@@ -41,14 +42,15 @@ class Database:
             message_lang, 
             sender_display_name, 
             tweet_href,
-            likes
+            likes,
+            verified_account
         ) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         '''
         with open(screenshot_img_path, "rb") as file:
             _screenshot_binary = sqlite3.Binary(file.read())
 
         cur = self.con.cursor()
         cur.execute(sql, [timestamp, tweet_timestamp, sender_id, message, _screenshot_binary, message_lang,
-                          sender_display_name, tweet_href, likes])
+                          sender_display_name, tweet_href, likes, verified_account])
         self.con.commit()
