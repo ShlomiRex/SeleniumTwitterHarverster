@@ -12,13 +12,14 @@ import SeleriumDriver
 import logging
 
 FORMAT = '%(asctime)s %(clientip)-15s %(user)-8s %(message)s'
-logging.basicConfig(format=FORMAT)
+logging.basicConfig(format=FORMAT, level=logging.INFO)
 logger = logging.getLogger()
 
 TMP_SCREENSHOT_FILE_NAME = "shot.png"
 TMP_SCREENSHOT_FILE_NAME_COMPRESSED = "shot_compressed.png"
 
 tweets_xpath = '/html/body/div/div/div/div[2]/main/div/div/div/div[1]/div/div[2]/div/div/section/div/div/*'
+tweets_holder_xpath = '/html/body/div[1]/div/div/div[2]/main/div/div/div/div[1]/div/div[2]/div/div/section/div/div/*'
 
 inner_tweet_sender_id_xpath = './div/div/article/div/div/div/div[2]/div[2]/div[1]/div/div/div[1]/div[1]/a/div/div[2]/div/span'
 inner_tweet_sender_display_name_xpath = './div/div/article/div/div/div/div[2]/div[2]/div[1]/div/div/div[1]/div[1]/a/div/div[1]'
@@ -43,8 +44,13 @@ class TwitterHarvester:
         url = f"https://twitter.com/search?q={search_what}&src=typed_query&f=live"
         self.driver.get(url)
 
-        self.__remove_footer()
-        self.__remove_header()
+        #self.__remove_footer()
+        #self.__remove_header()
+
+    def __get_tweets(self):
+        tweets = WebDriverWait(self.driver, 10).until(lambda x: x.find_elements(By.XPATH, tweets_holder_xpath))
+        return tweets
+
 
     def __process_tweet(self, tweet):
 
@@ -72,14 +78,12 @@ class TwitterHarvester:
             logger.info(f"Sender ID: {_sender_id}")
         except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _sender_id = None
-            # Something is wrong.
 
         try:
             _sender_display_name = tweet.find_element(By.XPATH, inner_tweet_sender_display_name_xpath).text
             logger.info(f"Sender display name: {_sender_display_name}")
         except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
             _sender_display_name = None
-            # Something is wrong. Why can't we find the sender name?
 
         try:
             _datetime_element = WebDriverWait(self.driver, 10).until(
@@ -126,9 +130,17 @@ class TwitterHarvester:
                              screenshot_img_path=_screenshot_path, likes=_likes,
                              verified_account=_verified_account)
 
-        # Scroll by amount of tweet height
-        _scroll_y = tweet.rect["height"]
-        self.driver.execute_script(f"window.scrollBy(0, {_scroll_y})")
+
+
+        try:
+            # Delete the tweet
+            self.driver.execute_script("arguments[0].remove()", tweet)
+        except (exceptions.NoSuchElementException, exceptions.StaleElementReferenceException):
+            tweets = WebDriverWait(self.driver, 10).until(lambda x: x.find_elements(By.XPATH, tweets_xpath))
+            self.driver.execute_script("arguments[0].remove()", tweets[0])
+            # Scroll by amount of tweet height
+            #_scroll_y = tweet.rect["height"]
+            #self.driver.execute_script(f"window.scrollBy(0, {_scroll_y})")
 
         #self.driver.execute_script("arguments[0].style.border=''", tweet)
 
@@ -151,17 +163,20 @@ class TwitterHarvester:
     def run(self):
         while True:
             # Tweets feed gets refreshed. So we ask again for the tweets.
-            tweets = WebDriverWait(self.driver, 10).until(lambda x: x.find_elements(By.XPATH, tweets_xpath))
+            tweets = self.__get_tweets()
             num_tweets = len(tweets)
 
             logger.info(f"Processing batch of {num_tweets} tweets")
 
             new_ids = []
+            tweet_num = 1
             for tweet in tweets:
                 _id = tweet.id
                 new_ids.append(_id)
                 if _id not in id_queue:
                     id_queue.append(_id)
+                    logger.info(f"Processing tweet: {tweet_num}")
+                    tweet_num += 1
                     self.__process_tweet(tweet)
 
             for _id in id_queue:
